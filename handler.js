@@ -8,17 +8,16 @@ module.exports.logevent = (event, context, callback) => {
   let response = {
     OK: {
       statusCode: 200,
-      body: JSON.stringify({
+      body: {
         message: 'Success in logging when you have made access to this service',
-        input: event,
         methodType: event.httpMethod,
-      }),
+      },
     },
     ERROR: {
       statusCode: 400,
-      body: JSON.stringify({
+      body: {
         message: 'Error while trying to access the service',
-      }),
+      },
     },
   };
 
@@ -27,8 +26,12 @@ module.exports.logevent = (event, context, callback) => {
       timeCreated: {
         S: new Date().getTime() + '',
       },
-      path: event.path,
-      sourceIP: event.requestContext.identity.sourceIp,
+      path: {
+        S: event.path,
+      },
+      sourceIP: {
+        S: event.requestContext.identity.sourceIp,
+      },
     };
 
     DynamoDB.putItem({
@@ -52,14 +55,16 @@ module.exports.logevent = (event, context, callback) => {
         response.ERROR.errorLog = err;
         callback(null, response.ERROR);
       } else {
-        response.OK.data = data;
-        callback(null, response.OK);
+        response.OK.headers = {};
+        response.OK.body.data = data;
+        response.OK.body = JSON.stringify(response.OK.body);
+        context.succeed(response.OK);
       }
     });
   };
 
   try {
-    switch (event.httpMethod) {
+    switch (event.httpMethod){
       case 'GET':
         getLogEventList();
         break;
@@ -67,10 +72,9 @@ module.exports.logevent = (event, context, callback) => {
         postLogEvent();
         break;
       default:
-        getLogEventList();
-        // context.fail(new Error('Unrecognized operation "' + event.httpMethod + '"'));
+        context.fail(new Error('Unrecognized operation "' + event.httpMethod + '"'));
+        break;
     }
-
   } catch (e) {
     callback(null, e);
   }

@@ -12,7 +12,7 @@ provider:
   iamRoleStatements:
     - Effect: "Allow"
       Action:
-        - "dynamodb:*"
+        - "*"
       Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
 
 # you can overwrite defaults here
@@ -88,6 +88,22 @@ resources:
           ProvisionedThroughput:
               ReadCapacityUnits: 1
               WriteCapacityUnits: 1
+      DynamoDBIamPolicy:
+            Type: AWS::IAM::Policy
+            DependsOn: logRequestTable
+            Properties:
+              PolicyName: lambda-dynamodb
+              PolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:Scan
+                    Resource: arn:aws:dynamodb:*:*:table/*
+              Roles:
+                - Ref: IamRoleLambdaExecution
 
 
 #        BucketName: my-new-bucket
