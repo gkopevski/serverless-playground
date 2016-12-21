@@ -1,9 +1,5 @@
 
-service: goranFirstService
-
-# You can pin your service to only deploy with a specific Serverless version
-# Check out our docs for more details
-# frameworkVersion: "=X.X.X"
+service: gkExampleService
 
 provider:
   name: aws
@@ -14,10 +10,22 @@ provider:
       Action:
         - "*"
       Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/*"
-
-# you can overwrite defaults here
-#  stage: dev
-#  region: us-east-1
+    - Effect: Allow
+      Action:
+      - "logs:CreateLogGroup"
+      - "logs:CreateLogStream"
+      - "logs:PutLogEvents"
+      Resource: "arn:aws:logs:*:*:*"
+    - Effect: Allow
+      Action:
+      - "sqs:ReceiveMessage"
+      - "sqs:DeleteMessage"
+      - "sqs:SendMessage"
+      Resource: { "Fn::GetAtt": [ "TaskQueue", "Arn"]}
+    - Effect: Allow
+      Action:
+      - "lambda:InvokeFunction"
+      Resource: arn:aws:lambda:*:*:*
 
 # you can add statements to the Lambda function's IAM Role here
 #  iamRoleStatements:
@@ -34,10 +42,6 @@ provider:
 #          - - "arn:aws:s3:::"
 #            - "Ref" : "ServerlessDeploymentBucket"
 
-# you can define service wide environment variables here
-#  environment:
-#    variable1: value1
-
 # you can add packaging information here
 #package:
 #  include:
@@ -47,38 +51,89 @@ provider:
 #    - exclude-me.js
 #    - exclude-me-dir/**
 
+environment:
+  region: eu-east-1
+  taskQueue: {"Ref":"TaskQueue"}
+  deadLetterQueue: {"Ref":"DeadLetterQueue"}
+  name: staging
+
+
+custom:
+  deadLetterQueueName : example-playground-sync-dead-letter-queue-${opt:stage, self:provider.stage}
+  taskQueueName: example-playground-sync-task-queue-${opt:stage, self:provider.stage}
+  workerLambdaName: staging-SQS-worker
+  consumerLambdaName: staging-SQS-consumer
+
+
 functions:
   logevent:
-    handler: handler.logevent
-
-#    The following are a few example events you can configure
-#    NOTE: Please make sure to change your handler code to work with those events
-#    Check the event documentation for details
+    handler: logevent.logevent
+    description: dummy example for get/post method from dynamoDB
     events:
       - http:
-          path: logevent/create
+          path: logevent
           method: post
       - http:
-          path: logevent/get
+          path: logevent
           method: get
-
 #      - s3: ${env:BUCKET}
 #      - schedule: rate(10 minutes)
 #      - sns: greeter-topic
 #      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+  migrator:
+      name: staging-SQS-consumer
+      handler: sqs/sqs-consumer.consume
+      description: function for migration of data and testing purposes
+      events:
+        - http:
+            path: migrate
+            method: get
+        - schedule:
+            rate: rate(1 minute)
+            enabled: true
 
-#    Define function environment variables here
-environment:
-  region: eu-east-1
-  logRequestTable: {"Ref":"logRequestTable"}
 
+  insertData:
+    name: staging-SQS-worker
+    handler: sqs/sqs-worker.work
+    description: worker that will be invoked when the consumer will be called and insert data in dynamoDB
+    events:
+      - http:
+          path: update
+          method: post
+
+  insertIntoSQS:
+    name: insertSQSMessage
+    handler: insertSQSMessage.insert
+    description: dummy post request that is creating new sqs message and storing in the queue
+    events:
+      - http:
+          path: insertSQSMessage
+          method: post
 
 resources:
   Resources:
-      logRequestTable:
+      TaskQueue:
+        Type: AWS::SQS::Queue
+        Properties:
+          QueueName: ${self:custom.taskQueueName}
+          MessageRetentionPeriod: '1209600'
+          VisibilityTimeout: '60'
+          RedrivePolicy:
+            deadLetterTargetArn:
+              Fn::GetAtt:
+              - DeadLetterQueue
+              - Arn
+            maxReceiveCount: '10'
+      DeadLetterQueue:
+          Type: AWS::SQS::Queue
+          Properties:
+            QueueName: ${self:custom.deadLetterQueueName}
+            MessageRetentionPeriod: '1209600'
+      logRequestTableBackup:
         Type: AWS::DynamoDB::Table
         Properties:
-          TableName: logRequestTable
+          TableName: logRequestTableBackup
           AttributeDefinitions:
               - AttributeName: timeCreated
                 AttributeType: S
@@ -88,26 +143,16 @@ resources:
           ProvisionedThroughput:
               ReadCapacityUnits: 1
               WriteCapacityUnits: 1
-      DynamoDBIamPolicy:
-            Type: AWS::IAM::Policy
-            DependsOn: logRequestTable
-            Properties:
-              PolicyName: lambda-dynamodb
-              PolicyDocument:
-                Version: '2012-10-17'
-                Statement:
-                  - Effect: Allow
-                    Action:
-                      - dynamodb:GetItem
-                      - dynamodb:PutItem
-                      - dynamodb:Scan
-                    Resource: arn:aws:dynamodb:*:*:table/*
-              Roles:
-                - Ref: IamRoleLambdaExecution
-
-
-#        BucketName: my-new-bucket
-#  Outputs:
-#     NewOutput:
-#       Description: "Description for the output"
-#       Value: "Some output value"
+#      logRequestTable:
+#        Type: AWS::DynamoDB::Table
+#        Properties:
+#          TableName: logRequestTable
+#          AttributeDefinitions:
+#              - AttributeName: timeCreated
+#                AttributeType: S
+#          KeySchema:
+#              - AttributeName: timeCreated
+#                KeyType: HASH
+#          ProvisionedThroughput:
+#              ReadCapacityUnits: 1
+#              WriteCapacityUnits: 1
